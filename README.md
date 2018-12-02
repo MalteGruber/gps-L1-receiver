@@ -3,7 +3,7 @@ GPS receivers are an amazing technology that we all too often take for granted. 
 
 This is still a work in progress, but it is able to lock onto the C/A codes, producing the following output:
 ```
-Starting at t 50.0005 s
+Starting at t 25.00025 s
 Got lock for SV 1 doppler -6722.22 Hz
 Got lock for SV 11 doppler -5200.96 Hz
 Got lock for SV 17 doppler -9833.33 Hz
