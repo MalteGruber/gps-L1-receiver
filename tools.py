@@ -2,42 +2,124 @@ import numpy as np
 from scipy import signal
 import math
 from prn_handler import *
+from settings import *
 
-#GPS
-PRN_LEN=4000
-
-def add_doppler(b, doppler):
-    t = 0
-    dT = 1 / 4e6  # Timestep between samples in seconds
-    for i in range(len(b)):        
-        dplr = math.cos(2 * math.pi * doppler * t)        
-        t += dT
-        b[i] = b[i] * dplr
-    return b
-
-def get_corr(doppler, sv, iq_signal): 
-    prn_samples = 4000
-    sprn = get_prn(sv, prn_samples)    
-    sprn = add_doppler(sprn, doppler)       
-    corr = signal.correlate(iq_signal, sprn, mode='valid',method="fft") 
-    return corr
-
-
-
-"""
-Returns information about
-"""
-def get_prn_info(offset, buffer,doppler_freq,sv):
+def limit(val,lim):
+    if val>lim:
+        return lim
+    if val<-lim:
+        return -lim
+    return val
     
-    iq_signal = np.array(buffer[offset: offset + PRN_LEN * 2])  
-    corr = get_corr(doppler_freq, sv, iq_signal)
-    acorr = abs(corr)
-    peak = max(acorr)
-    avg = sum(acorr) / len(acorr)
-    return {"max_idx":(acorr.argmax()),
-            "snr":peak / avg
-            }
- 
+class PidController:
+    def __init__(self,p,i,d):
+        self.p=p        
+        self.i=i
+        self.d=d
+        self.integ_sum=0
+        self.prev_error=0
+        self.pid_output=[0]
+        self.pid_output=[0]*150
+        
+    def step(self,ref,measurement):    
+        error=(ref-measurement)
+        
+        error_derivative=error-self.prev_error
+        self.prev_error=error
+        
+        self.integ_sum+=error
+
+        output=error*self.p-error*error_derivative*self.d+self.integ_sum*self.i
+        self.pid_output.append(output)
+        self.pid_output=self.pid_output[1:]
+        for i in range(len(self.pid_output)):
+            self.pid_output[i]=self.pid_output[i]*0.3
+        avg=0
+        for o in self.pid_output:
+
+            avg+=o
+        avg/=len(self.pid_output)
+        
+        return avg
+
+
+class Correlator:
+    def __init__(self):
+        self.t=0
+        
+    def add_doppler_cpx(self,b, doppler):
+        dT = 1 / sample_rate_sdr
+        for i in range(len(b)):      
+            dplr_i = math.cos(2 * math.pi * doppler * self.t)
+            dplr_q = math.sin(2 * math.pi * doppler * self.t)       
+            self.t+=dT          
+            b[i] = b[i].real * dplr_i  +  1.j*(b[i].real * dplr_q)
+        return b
+    
+    def reset_local_phase(self):
+        self.t=0    
+        
+    """
+    Used for simulator
+    """
+    def get_sprn(self,sv,doppler):
+        prn_samples = PRN_LEN
+        sprn = get_prn(sv, prn_samples)  
+        
+        deviation=10.2
+        noise = np.random.normal(0,deviation,len(sprn))+1.j*np.random.normal(0,deviation,len(sprn))
+        
+        deviation=0.5
+        mean=0.1
+        snr_noise = np.random.normal(mean,deviation,len(sprn))+1.j*np.random.normal(mean,deviation,len(sprn))
+        
+        sprn = np.array(sprn,dtype=np.complex_)
+       # sprn=-1.j*sprn
+       # sprn=-1*sprn
+        sprn*=snr_noise
+       # sprn+=noise       
+       
+        sprn = self.add_doppler_cpx(sprn, doppler)
+        sprn *=-1.j    
+        return sprn    
+    
+    def get_corr_cpx(self,doppler, sv, iq_signal,full=True,idx=0): 
+        import time
+        
+        prn_samples = PRN_LEN
+        sprn = get_prn(sv, prn_samples)    
+        sprn = np.array(sprn,dtype=np.complex_)
+        sprn = self.add_doppler_cpx(sprn, doppler)       
+
+
+        exp_len=PRN_LEN*2
+        if(len(iq_signal)!=exp_len):
+            print("Unexpected iq signal len of",len(iq_signal),"expected",exp_len)
+   
+
+        corr=[]
+        if(full):
+            corr = signal.correlate(iq_signal, sprn, mode='valid')#,method="fft")   
+                  
+        else:
+            
+            corr=np.zeros(len(sprn),dtype=np.complex_)
+        
+            ref=np.conj(sprn)
+            for i in range(3):
+                offset=idx-1+i
+                if(offset<0):
+                    offset=len(sprn)+offset
+                try:
+                    xcorr=np.dot(iq_signal[offset:offset+len(sprn)],ref)
+                except:
+                    print("ERROR!!!",offset,len(sprn),len(ref))
+                    print(sprn)
+                corr[offset]=xcorr
+
+        return corr
+    
+
     
 def get_peak_matches(peaks,tol):
     no_peaks = []
@@ -51,40 +133,4 @@ def get_peak_matches(peaks,tol):
             if(this_peak > peaks[j] - tol and this_peak <= peaks[j] + tol):
                 no_peaks[i] += 1
     return no_peaks
-"""
-@param peaks: A list of the location of maximum correlation
-@return: The number of matching peaks within the tolerance
-"""
-def get_num_peaks(peaks):
-    no_peaks=get_peak_matches(peaks,3)
-    return max(no_peaks)
 
-
-def get_idx_of_common_peaks( peaks):
-    no_peaks=get_peak_matches(peaks,3)
-    max_peaks=max(no_peaks)
-    idx_of_max_peaks=[]
-    for i in range(len(no_peaks)):
-        p=no_peaks[i]
-        
-        if(p==max_peaks):
-            idx_of_max_peaks.append(peaks[i])
-    
-    return sum(idx_of_max_peaks)/len(idx_of_max_peaks)
-"""
-This function analyzes the buffer and provides information about its properties
-@param freq: The doppler frequency at which to do the analyzis
-@return: peaks: maximum number of peaks that occure within the same time delay
-@return: snr: a rough estimation of the maximum peaks relationship to the remaning correlation
-"""
-def get_buffer_info(buffer,freq,scan_len,sv):
-    peaks = []
-    snr_lst = []        
-    for j in range(scan_len):
-        info = get_prn_info(j * PRN_LEN,buffer, freq,sv)
-        peaks.append(info["max_idx"])
-        snr_lst.append(info["snr"])  
-    return {"peaks":get_num_peaks(peaks), "best_snr":max(snr_lst)}    
-
-
-    
