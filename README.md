@@ -1,14 +1,36 @@
-# GPS Receiver
-GPS receivers are an amazing technology that we all too often take for granted. This program is an exploration of the techniques that make GPS possible. The program takes input in the form of an SDR capture in quadrature form. From this data, the program extracts the signals originating from the GPS satellites by correlating their C/A codes to the received data. For now, the program does not deal with the calculations of determining the exact position of the user.
+# py-sdr-gps-L1
+This is a project that I did to get some understanding of SDR receivers and practical signal processing.
+During this work, I have refrained from looking at other implementations and have tried to solve issues on my own. Hence some solutions to problems might seem a bit unconventional and possibly overly convoluted.
 
-This is still a work in progress, but it is able to lock onto the C/A codes, producing the following output:
-```
-Starting at t 25.00025 s
-Got lock for SV 1 doppler -6722.22 Hz
-Got lock for SV 11 doppler -5200.96 Hz
-Got lock for SV 17 doppler -9833.33 Hz
-Got lock for SV 20 doppler -8388.89 Hz
-Got lock for SV 32 doppler -6500.0 Hz
-```
+That being said, this project has provided me with much insight, and it has been a lot of fun. This readme file contains a brief description of some of the key components and concepts of the project.
 
-This corresponds with the satellites that are received by the reference log, found [HERE](https://gnss-sdr.org/my-first-fix/). Note that the SDR capture is not included here, due to it's size.
+## RF Front End
+I used the RTL-SDR which is a 30$ SDR receiver (Including *Swedish* VAT!) based on the now classic RTL2832U receiver chip. I used a sampling rate of 2MS/S which is close to the limit of the RTL-SDR. I used an active GPS antenna powered directly from the 5V bias tee of the RTL-SDR. I used GNU radio to dump the samples into a file as IQ interleaved signed int16 samples (This is the format that the program expects). 
+
+<p align="center">
+<img src="sdr.png" width="70%" />
+</p>
+
+
+## Single correlation design
+As the signal is received it is divided into chunks of size 2*1024 IQ-Samples (I.e. two PRNs with unknown offset), these samples are then cross-correlated to the incoming signal. The correlation is next scanned for the maximum. If the received noise contains the signal three will be correlation and the offset of the correlation will be time offset of the signal. This time offset is ultimately what is used to determine the distance to the satellite (All satellites transmit their PRNs at exactly the same time). Once a signal has been detected, it's correlation maximum is feed to a doppler tracking algorithm.
+
+
+## Doppler frequency and Correlation
+
+The argument of the complex correlation maximum will that of the phase of the heterodyne beat of the Doppler modified pseudorandom sequence and the Heterodyne beat between the LO receiver, and the Doppler shifted LO of the sending satellite.
+
+![](https://latex.codecogs.com/gif.latex?%5CDelta%5Cphi%28f_0%2Cf_1%2C%5CDelta%20T%29%29%3D2%5Cpi%28f_1-f_0%29%29%5CDelta%20T)
+
+Under certain conditions ![](https://latex.codecogs.com/gif.latex?%5CDelta%5Cphi) can be used to create an integral of the phase difference between the two signals.
+
+The phase integral can now be used as an error signal for a PID controller which controls the local estimation of the Doppler frequency.  The phase integral and doppler generator form a feedback loop as illustrated in the following figure
+
+<p align="center">
+  <img src="feedback.png" width="60%"/>
+</p>
+
+## Locking onto the bitstream
+Each bit is encoded using 20 PRNs, to get a basic bit lock I used this metric to find transitions that are dividable by 20 with a zero remainder (I.e 20, 40,60,80..120 etc ). Once such a transition is seen a confidence counter is increased. This way the receiver locks onto the bitstream, if there is noise it is ignored due to the previously achieved lock. However, merely locking onto the bitstream does not provide information about where we are in the bitstream, for this purpose the bitstream contains preambles which we can scan for. Note, however, that the preambles occurs at other places in the data and can only be accepted after checking the parity of the preamble and adjacent data
+
+
