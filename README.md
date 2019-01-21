@@ -8,7 +8,7 @@ This project is limited to receiving the data bits of the navigation message, ho
 ## RF Front End
 I used the RTL-SDR which is a 30$ SDR receiver (Including *Swedish* VAT!) based on the now classic RTL2832U receiver chip. I used a sampling rate of 2MS/S which is close to the limit of the RTL-SDR. I used an active GPS antenna powered directly from the 5V bias tee of the RTL-SDR. I used GNU radio to dump the samples into a file as IQ interleaved signed int16 samples (This is the format that the program expects).  The file is far to large to upload to GitHub, however, a similar capture *2013_04_04_GNSS_SIGNAL_at_CTTC_SPAIN* can be found [here](https://gnss-sdr.org/my-first-fix/). It is captured at twice the sampling rate but the file format is the same (Interleaved 16 bit signed int).  
 
-*Here is the SDR Receiver and active GPS antenna that I used:*
+*The SDR Receiver and GPS antenna that I used:*
 <p align="center">
 <img src="doc/sdr.png" width="70%" />
 </p>
